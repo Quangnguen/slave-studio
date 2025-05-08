@@ -11,7 +11,7 @@ const exePath = 'D:\\Acquisition.exe'
 let currentFolderName = '';
 
 const startExe = (folderName) => {
-    const workingDir = path.join('D:\\test\\', folderName);
+    const workingDir = path.join('D:\\f-scene\\', folderName);
     //const workingDir = path.join(__dirname, 'test', folderName);
     console.log('f:',workingDir)
     currentFolderName = folderName;
