@@ -6,9 +6,10 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require("child_process");
 const { exec } = require('child_process'); // Thêm child_process
+const { promisify } = require('util')
+const axios = require('axios');
 
-let lastFolderName = ''; // Lưu tên thư mục output khi chạy file .exe
-
+const execAsync = promisify(exec);
 
 // 👉 Route để chạy file exe
 router.post('/start', (req, res) => {
@@ -50,8 +51,104 @@ router.delete('/delete', (req, res) => {
 
 let ftpProcess = null;
 
-async function zipFolderWithoutCompression(sourceFolder, outPath) {
+
+async function getPidOnPort2121() {
+    try {
+        const { stdout: psOutput } = await execAsync(
+            'powershell -Command "(Get-NetTCPConnection -LocalPort 2121 -State Listen | Select-Object -First 1).OwningProcess"'
+        );
+        const output = psOutput.trim();
+        console.log('🎯 Output PID Powershell:', output);
+        if (output) return parseInt(output);
+
+        const { stdout: netstatOutput } = await execAsync('netstat -a -n -o | find "0.0.0.0:2121"');
+        const netstatResult = netstatOutput.trim();
+        console.log('🎯 Output netstat:', netstatResult);
+        const pidMatch = netstatResult.match(/LISTENING\s+(\d+)/);
+        return pidMatch ? parseInt(pidMatch[1]) : null;
+    } catch (error) {
+        console.error('❌ Error getting PID:', error.message);
+        return null;
+    }
+}
+
+// ❌ Kill tiến trình theo PID
+async function killProcess(pid) {
+    try {
+        await execAsync(`taskkill /F /PID ${pid}`);
+        console.log(`❌ Đã kill tiến trình PID ${pid}`);
+        return true;
+    } catch (e) {
+        console.error(`❌ Không thể kill PID ${pid}:`, e.message);
+        return false;
+    }
+}
+
+// ▶️ Chạy ftp.py (không detach, inherit IO)
+function runPythonProcess() {
+    const ftpPath = path.join(__dirname, '..', 'ftp.py');
+    if (!fs.existsSync(ftpPath)) {
+        console.error(`❌ FTP script not found at: ${ftpPath}`);
+        throw new Error('FTP script not found');
+    }
+
+    const pythonProcess = spawn('python', [ftpPath], {
+        detached: false,
+        stdio: ['ignore', process.stdout, process.stderr],
+    });
+
+    pythonProcess.on('error', (err) => {
+        console.error('❌ Lỗi khi chạy Python:', err.message);
+    });
+
+    pythonProcess.on('exit', (code) => {
+        console.log(`🐍 Python process exited with code ${code}`);
+    });
+
+    return pythonProcess;
+}
+
+
+// ⏳ Đợi cổng 2121 mở
+async function waitUntilPort2121Open(timeout = 50000) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        if (getPidOnPort2121()) return;
+        await new Promise(res => setTimeout(res, 500)); // chờ 500ms
+    }
+    throw new Error("timeout");
+}
+
+// 🛠️ Endpoint chính
+router.get('/check-ftp', async (req, res) => {
+    let pid = await getPidOnPort2121();
+    console.log('🧪 PID trước khi kill:', pid);
+
+    if (pid) {
+        console.log('🔧 Killing existing process on port 2121');
+        await killProcess(pid);
+        await new Promise(res => setTimeout(res, 1000));
+    }
+
+    runPythonProcess();
+    await new Promise(res => setTimeout(res, 2000)); // Đợi 2 giây để FTP bind cổng
+
+    try {
+        await waitUntilPort2121Open();
+        const newPid = await getPidOnPort2121();
+        console.log('✅ FTP server đã mở, PID mới:', newPid);
+        res.json(1);
+    } catch (err) {
+        console.error('❌ Lỗi khi đợi mở cổng:', err.message);
+        res.json(0);
+    }
+});
+async function zipFolderWithoutCompression(folderName) {
     return new Promise((resolve, reject) => {
+        const basePath = "D:\\test\\";
+        const sourceFolder = path.join(basePath, folderName);
+        const outPath = path.join(basePath, `${folderName}.zip`);
+
         const output = fs.createWriteStream(outPath);
         const archive = archiver("zip", { store: true }); // Không nén, chỉ đóng gói
 
@@ -64,50 +161,37 @@ async function zipFolderWithoutCompression(sourceFolder, outPath) {
     });
 }
 
-router.post("/start-ftp", async (req, res) => {
-    let folder = req.query.folder;
-    console.log(`📂 Nhận đường dẫn chia sẻ: ${folder}`);
+router.get("/download-ftp-file", async (req, res) => {
+    const { ip, remotePath, localFolder, folderName } = req.query;
+    console.log("📦 Request:", ip, remotePath, localFolder, folderName);
 
-    if (!folder) return res.status(400).json({ error: "Thiếu thư mục chia sẻ" });
-
-    folder = folder.replace(/[:]+$/, ""); // Chuẩn hóa đường dẫn
-    console.log(`📂 Đường dẫn sau khi chuẩn hóa: ${folder}`);
-
-    if (!fs.existsSync(folder) || !fs.lstatSync(folder).isDirectory()) {
-        return res.status(400).json({ error: "Thư mục không tồn tại hoặc không hợp lệ" });
+    // Kiểm tra tham số đầu vào
+    if (!ip || !remotePath || !localFolder || !folderName) {
+        return res.status(400).json({ error: "Thiếu ip, remotePath hoặc localFolder" });
     }
-
-    const zipFileName = `${path.basename(folder)}.zip`;
-    const zipFilePath = path.join(path.dirname(folder), zipFileName);
-
-    console.log(`📦 Đang đóng gói thư mục vào: ${zipFilePath}`);
 
     try {
-        await zipFolderWithoutCompression(folder, zipFilePath);
-        console.log(`✅ Đóng gói hoàn tất: ${zipFilePath}`);
+        await zipFolderWithoutCompression(folderName);
+        console.log("✅ Nén thư mục thành công:", folderName);
+    } catch (zipErr) {
+        console.error("❌ Lỗi khi nén thư mục:", zipErr.message);
+        return res.status(500).json({ error: "Lỗi khi nén thư mục" });
+    }
 
-        if (ftpProcess && !ftpProcess.killed) {
-            ftpProcess.kill();
+    try {
+        const response = await axios.get("http://192.168.100.212:3002/check-ftp");
+        console.log("📡 Kết quả check-ftp:", response.data);
+
+        if (response.data === 1) {
+            res.json(1)
+        } else {
+            res.json(0)
         }
-
-        const ftpScriptPath = "D:/ftp-server.txt";
-        ftpProcess = spawn("python", [ftpScriptPath, zipFilePath]);
-
-        ftpProcess.stdout.on("data", (data) => {
-            console.log(`[FTP] ${data}`);
-        });
-
-        ftpProcess.stderr.on("data", (data) => {
-            console.error(`[FTP Error] ${data}`);
-        });
-
-        res.json({ message: "✅ Đã bật FTP chia sẻ file ZIP: " + zipFilePath });
-    } catch (error) {
-        console.error(`❌ Lỗi khi đóng gói thư mục: ${error.message}`);
-        res.status(500).json({ error: "Không thể đóng gói thư mục" });
+    } catch (e) {
+        console.error("❌ Lỗi khi gọi check-ftp:", e.message);
+        res.status(500).json({ error: "❌ Không thể gọi check-ftp" });
     }
 });
-
 
 let pythonProcess = null;
 router.get('/liveview', (req, res) => {

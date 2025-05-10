@@ -1,0 +1,37 @@
+import os
+import sys
+from ftplib import FTP
+
+def download_file(ftp_ip, remote_file_path, local_folder_path):
+    try:
+        ftp = FTP()
+        ftp.connect(ftp_ip, 2121)
+        ftp.login()  # anonymous login
+
+        # Tạo tên file đích giữ nguyên tên gốc
+        filename = os.path.basename(remote_file_path)
+        local_file_path = os.path.join(local_folder_path, filename)
+
+        # Tạo thư mục đích nếu chưa tồn tại
+        os.makedirs(local_folder_path, exist_ok=True)
+
+        # Tải file
+        with open(local_file_path, 'wb') as f:
+            ftp.retrbinary(f'RETR {remote_file_path}', f.write)
+
+        print(f"Da tai: {remote_file_path} -> {local_file_path}")
+
+        ftp.quit()
+    except Exception as e:
+        print(f"❌ Lỗi khi tải file: {e}")
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Cách dùng: python ftp_download.py <ftp_ip> <remote_file_path> <local_folder_path>")
+        sys.exit(1)
+
+    ftp_ip = sys.argv[1]
+    remote_file_path = sys.argv[2]
+    local_folder_path = sys.argv[3]
+
+    download_file(ftp_ip, remote_file_path, local_folder_path)
