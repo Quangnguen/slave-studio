@@ -1,0 +1,13 @@
+import serial
+import time
+
+# Mở kết nối với Arduino (đảm bảo COM đúng)
+ser = serial.Serial('COM3', 9600, timeout=1)
+time.sleep(2)  # Đợi Arduino khởi động
+
+
+
+ser.write('y'.encode())
+  
+
+ser.close()

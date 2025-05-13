@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { startExe, stopExe, deleteExe, getCurrentFolder } = require('../Services/exeService');
+const { startExe, stopExe, deleteExe, notifyMaster, triggerY, triggerS  } = require('../Services/exeService');
 const archiver = require('archiver');
 const fs = require('fs');
 const path = require('path');
@@ -10,6 +10,32 @@ const { promisify } = require('util')
 const axios = require('axios');
 
 const execAsync = promisify(exec);
+
+router.post('/trigger-y', (req, res) => {
+    console.log('🟡 Nhận yêu cầu trigger y.txt từ master');
+    try {
+        console.log("Y")
+        triggerY();
+        res.send({ status: 'ok', message: 'Đã trigger y.txt' });
+    } catch (error) {
+        console.error('❌ Lỗi khi trigger y.txt:', error);
+        res.status(500).send('Trigger y.txt thất bại');
+    }
+});
+
+// Trigger chạy s.txt, sau đó đọc result.txt và gửi về master
+router.post('/trigger-s', (req, res) => {
+    console.log('🟡 Nhận yêu cầu trigger s.txt từ master');
+    try {
+        triggerS(); // bên trong đã tự xử lý exec + đọc result
+
+        // Gửi phản hồi ngay, không chờ kết quả từ result.txt
+        res.send({ status: 'ok', message: 'Đã trigger s.txt, đang xử lý result.txt...' });
+    } catch (error) {
+        console.error('❌ Lỗi khi trigger s.txt:', error);
+        res.status(500).send('Trigger s.txt thất bại');
+    }
+});
 
 // 👉 Route để chạy file exe
 router.post('/start', (req, res) => {
