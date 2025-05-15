@@ -8,8 +8,28 @@ const { spawn } = require("child_process");
 const { exec } = require('child_process'); // Thêm child_process
 const { promisify } = require('util')
 const axios = require('axios');
-
 const execAsync = promisify(exec);
+const si = require('systeminformation');
+
+router.get('/slave-info', async (req, res) => {
+    try {
+        const currentLoad = await si.currentLoad();
+        const mem = await si.mem();
+        const fsSize = await si.fsSize();
+
+        const systemUsage = {
+            cpu: currentLoad.currentLoad.toFixed(2),
+            ram: ((mem.active / mem.total) * 100).toFixed(2),
+            disk: fsSize.length > 0 ? ((fsSize[0].used / fsSize[0].size) * 100).toFixed(2) : null,
+        };
+
+        res.json(systemUsage);
+    } catch (error) {
+        console.error('Error getting system usage:', error);
+        res.status(500).json({ error: 'Unable to retrieve system usage' });
+    }
+});
+
 
 router.post('/trigger-y', (req, res) => {
     console.log('🟡 Nhận yêu cầu trigger y.txt từ master');
@@ -35,6 +55,36 @@ router.post('/trigger-s', (req, res) => {
         console.error('❌ Lỗi khi trigger s.txt:', error);
         res.status(500).send('Trigger s.txt thất bại');
     }
+});
+
+router.post('/liveview-start', (req, res) => {
+    const exeFolder = path.join(__dirname, '..', 'exe');
+    const yFile = path.join(exeFolder, 'y.txt');
+    console.log(`📄 Đang chạy y.txt...`);
+
+    exec(`python ${yFile}`, (err, stdout, stderr) => {
+        if (err) {
+            console.error('❌ Lỗi khi chạy y.txt:', err);
+            return res.status(500).json({ message: 'Lỗi khi chạy y.txt', error: err.message });
+        }
+        console.log('✅ Đã chạy xong y.txt');
+        return res.status(200).json({ message: 'Đã chạy xong y.txt', output: stdout });
+    });
+});
+
+router.post('/liveview-stop', (req, res) => {
+    const exeFolder = path.join(__dirname, '..', 'exe');
+    const yFile = path.join(exeFolder, 's.txt');
+    console.log(`📄 Đang chạy s.txt...`);
+
+    exec(`python ${yFile}`, (err, stdout, stderr) => {
+        if (err) {
+            console.error('❌ Lỗi khi chạy y.txt:', err);
+            return res.status(500).json({ message: 'Lỗi khi chạy y.txt', error: err.message });
+        }
+        console.log('✅ Đã chạy xong s.txt');
+        return res.status(200).json({ message: 'Đã chạy xong y.txt', output: stdout });
+    });
 });
 
 // 👉 Route để chạy file exe

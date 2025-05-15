@@ -5,6 +5,8 @@ import axios from 'axios'
 import { myIp, ipMaster } from '../utils/ipConfig.js'
 import { fileURLToPath } from 'url';
 
+let SLAVE_ID = 12
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -44,8 +46,10 @@ function startExe(folderName) {
             console.log("✅ Đã đủ 5 file *_ready.txt, báo về master");
             notifyMasterStrigger(folderName);
 
-            triggerMap.triggerY = () => runY();
-            triggerMap.triggerS = () => runS(globalFolderName);
+            if (SLAVE_ID === 12) {
+                triggerMap.triggerY = () => runY();
+                triggerMap.triggerS = () => runS(globalFolderName);
+            }
             console.log(triggerMap)
         } else {
             elapsed += interval;
@@ -72,63 +76,114 @@ function runY() {
         console.log('✅ Đã chạy xong y.txt');
     });
 }
-function runS(globalFolderName) {
+async function runS(globalFolderName) {
     const exeFolder = path.join(__dirname, '..', 'exe');
     const sFile = path.join(exeFolder, 's.txt');
+    const workingDir = path.join('D:\\test\\', globalFolderName);
+    const resultFile = path.join(workingDir, 'result.txt');
 
     console.log(`📄 Đang chạy s.txt...`);
-    const workingDir = path.join('D:\\test\\', globalFolderName);
-    const resultFile = path.join(workingDir, 'result.txt'); // đặt đúng chỗ
 
-    exec(`python ${sFile}`, { cwd: workingDir }, (err, stdout, stderr) => {
+    exec(`python ${sFile}`, { cwd: workingDir }, async (err, stdout, stderr) => {
         const exitCode = err ? err.code : 0;
 
-        // Ghi kết quả vào result.txt
+        // 📝 Ghi kết quả vào result.txt trước
         fs.writeFileSync(resultFile, `${exitCode}`);
-
         console.log('✅ Đã chạy xong s.txt');
 
-        // Đọc file sau 3 giây (để chắc chắn đã ghi xong)
-        setTimeout(() => {
-            if (fs.existsSync(resultFile)) {
-                const status = fs.readFileSync(resultFile, 'utf-8').trim();
-                console.log(`📄 Trạng thái exe sau s.txt: ${status}`);
-                if (status === '0') {
-                    notifyMaster();
+        // ✅ Nếu exitCode === 0 thì gửi tín hiệu đến các slave khác
+        if (exitCode === 0) {
+            const slaveIps = [
+                //'192.168.100.201',
+                //'192.168.100.202',
+                '192.168.100.203',
+                //'192.168.100.204',
+                //'192.168.100.205',
+                //'192.168.100.206',
+                //'192.168.100.207',
+                //'192.168.100.208',
+                //'192.168.100.209',
+                //'192.168.100.210',
+                //'192.168.100.211',
+                //'192.168.100.212'
+            ];
+
+            // Loại bỏ IP hiện tại
+            const targetIps = slaveIps.filter(ip => ip !== '192.168.100.212');
+
+            const requests = targetIps.map(ip =>
+                axios.post(`http://${ip}:3002/write-result`, {
+                    folderName: globalFolderName,
+                    exitCode: exitCode
+                }).then(() => {
+                    console.log(`📤 Đã gửi đến ${ip}`);
+                }).catch(err => {
+                    console.error(`❌ Lỗi gửi đến ${ip}: ${err.message}`);
+                })
+            );
+
+            await Promise.all(requests);
+            console.log("✅ Đã gửi tín hiệu đến tất cả slave");
+
+            // 🕒 Đọc lại file sau 3 giây để chắc chắn ghi xong
+            setTimeout(() => {
+                if (fs.existsSync(resultFile)) {
+                    const status = fs.readFileSync(resultFile, 'utf-8').trim();
+                    console.log(`📄 Trạng thái exe sau s.txt: ${status}`);
+                    if (status === '0') {
+                        notifyMaster();
+                    } else {
+                        console.warn(`⚠️ Lỗi khi chạy s.txt: ${status}`);
+                    }
                 } else {
-                    console.warn(`⚠️ Lỗi khi chạy s.txt: ${status}`);
+                    console.warn(`⚠️ Không tìm thấy result.txt sau khi chạy s.txt`);
                 }
-            } else {
-                console.warn(`⚠️ Không tìm thấy result.txt sau khi chạy s.txt`);
-            }
-        }, 3000);
+            }, 3000);
+        } else {
+            console.warn(`⚠️ s.txt thất bại với mã lỗi: ${exitCode}`);
+        }
     });
 }
 // Gọi từ master để trigger chạy y.txt
 export function triggerY() {
-    if (triggerMap.triggerY) {
+    if (SLAVE_ID === 12 && triggerMap.triggerY) {
         triggerMap.triggerY();
     } else {
-        console.warn('⚠️ Chưa sẵn sàng để trigger y.txt');
+        console.log(`ℹ️ Máy ${SLAVE_ID} không chạy y.txt`);
     }
 }
 
 // Gọi từ master để trigger chạy s.txt
 export function triggerS(globalFolderName) {
-    if (triggerMap.triggerS) {
+    if (SLAVE_ID === 12 && triggerMap.triggerS) {
+        // Máy số 12: thực thi s.txt
         triggerMap.triggerS(globalFolderName);
     } else {
-        console.warn('⚠️ Chưa sẵn sàng để trigger s.txt');
+        // Máy khác: chỉ kiểm tra result.txt
+        checkResultOnly(globalFolderName);
     }
 }
 
 
-const checkReadyFiles = (workingDir) => {
-    const files = fs.readdirSync(workingDir);
-    const readyFiles = files.filter(file => file.endsWith('_ready.txt'));
-    return readyFiles.length >= 5;
-};
+function checkResultOnly(globalFolderName) {
+    const workingDir = path.join('D:\\test\\', globalFolderName);
+    const resultFile = path.join(workingDir, 'result.txt');
 
+    console.log(`⏳ [Slave ${SLAVE_ID}] Đợi 3 giây để kiểm tra result.txt...`);
+    setTimeout(() => {
+        if (fs.existsSync(resultFile)) {
+            const status = fs.readFileSync(resultFile, 'utf-8').trim();
+            console.log(`📄 [Slave ${SLAVE_ID}] Trạng thái trong result.txt: ${status}`);
+            if (status === '0') {
+                notifyMaster();
+            } else {
+                console.warn(`⚠️ [Slave ${SLAVE_ID}] result.txt lỗi: ${status}`);
+            }
+        } else {
+            console.warn(`❌ [Slave ${SLAVE_ID}] Không tìm thấy result.txt`);
+        }
+    }, 3000);
+}
 
 const getCurrentFolder = () => currentFolderName;
 const notifyMaster = async () => {
@@ -137,7 +192,7 @@ const notifyMaster = async () => {
         await axios.post(`http://${ipMaster}:3001/slave-status`, {
             slaveIp: `${myIp}`,
             status: 'done',
-            folderName: currentFolderName,
+            folderName: globalFolderName,
         });
 
         console.log('📨 Đã gửi trạng thái hoàn thành về master.');
@@ -146,13 +201,13 @@ const notifyMaster = async () => {
     }
 };
 
-const notifyMasterStrigger = async (folderName) => {
+const notifyMasterStrigger = async (globalFolderName) => {
 
     try {
         await axios.post(`http://${ipMaster}:3001/strigger-ok`, {
             slaveIp: `${myIp}`,
             status: 'ready',
-            folderName: folderName,
+            folderName: globalFolderName,
         });
 
         console.log('📨 Đã gửi trạng thái hoàn thành về master.');
